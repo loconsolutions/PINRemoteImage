@@ -9,13 +9,17 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 #import <PINRemoteImage/PINRemoteImage.h>
+#import <PINRemoteImage/PINURLSessionManager.h>
 #import <PINRemoteImage/UIImageView+PINRemoteImage.h>
+#if USE_FLANIMATED_IMAGE
 #import <FLAnimatedImage/FLAnimatedImage.h>
+#endif
 #import <PINCache/PINCache.h>
 
 #if DEBUG
 @interface PINRemoteImageManager ()
 
+@property (nonatomic, strong) PINURLSessionManager *sessionManager;
 @property (nonatomic, readonly) NSUInteger totalDownloads;
 
 - (float)currentBytesPerSecond;
@@ -23,11 +27,20 @@
 - (void)setCurrentBytesPerSecond:(float)currentBPS;
 
 @end
+
+@interface PINURLSessionManager ()
+
+@property (nonatomic, strong) NSURLSession *session;
+
+@end
 #endif
 
-@interface PINRemoteImage_Tests : XCTestCase
+@interface PINRemoteImage_Tests : XCTestCase <PINURLSessionManagerDelegate>
 
 @property (nonatomic, strong) PINRemoteImageManager *imageManager;
+@property (nonatomic, strong) NSData *data;
+@property (nonatomic, strong) NSURLSessionTask *task;
+@property (nonatomic, strong) NSError *error;
 
 @end
 
@@ -48,6 +61,21 @@
 - (NSURL *)GIFURL
 {
     return [NSURL URLWithString:@"https://s-media-cache-ak0.pinimg.com/originals/90/f5/77/90f577fc6abcd24f9a5f9f55b2d7482b.jpg"];
+}
+
+- (NSURL *)emptyURL
+{
+    return [NSURL URLWithString:@""];
+}
+
+- (NSURL *)fourZeroFourURL
+{
+    return [NSURL URLWithString:@"https://www.pinterest.com/404/"];
+}
+
+- (NSURL *)headersURL
+{
+    return [NSURL URLWithString:@"http://httpbin.org/headers"];
 }
 
 - (NSURL *)JPEGURL_Small
@@ -80,6 +108,20 @@
     return [NSURL URLWithString:@"https://www.gstatic.com/webp/gallery3/4_webp_ll.webp"];
 }
 
+#pragma mark - <PINURLSessionManagerDelegate>
+
+- (void)didReceiveData:(NSData *)data forTask:(NSURLSessionTask *)task
+{
+    self.data = data;
+    self.task = task;
+}
+
+- (void)didCompleteTask:(NSURLSessionTask *)task withError:(NSError *)error
+{
+    self.task = task;
+    self.error = error;
+}
+
 - (void)setUp
 {
     [super setUp];
@@ -96,6 +138,7 @@
     [super tearDown];
 }
 
+#if USE_FLANIMATED_IMAGE
 - (void)testGIFDownload
 {
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
@@ -112,6 +155,39 @@
     dispatch_semaphore_wait(semaphore, [self timeout]);
     XCTAssert(outAnimatedImage && [outAnimatedImage isKindOfClass:[FLAnimatedImage class]], @"Failed downloading animatedImage or animatedImage is not an FLAnimatedImage.");
     XCTAssert(outImage == nil, @"Image is not nil.");
+}
+#endif
+
+- (void)testInitWithNilConfiguration
+{
+    self.imageManager = [[PINRemoteImageManager alloc] initWithSessionConfiguration:nil];
+    XCTAssertNotNil(self.imageManager.sessionManager.session.configuration);
+}
+
+- (void)testInitWithConfiguration
+{
+    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
+    configuration.HTTPAdditionalHeaders = @{ @"Authorization" : @"Pinterest 123456" };
+    self.imageManager = [[PINRemoteImageManager alloc] initWithSessionConfiguration:configuration];
+    XCTAssert([self.imageManager.sessionManager.session.configuration.HTTPAdditionalHeaders isEqualToDictionary:@{ @"Authorization" : @"Pinterest 123456" }]);
+}
+
+- (void)testCustomHeaderIsAddedToImageRequests
+{
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
+    configuration.HTTPAdditionalHeaders = @{ @"X-Custom-Header" : @"Custom Header Value" };
+    self.imageManager = [[PINRemoteImageManager alloc] initWithSessionConfiguration:configuration];
+    self.imageManager.sessionManager.delegate = self;
+    [self.imageManager downloadImageWithURL:[self headersURL]
+                                    options:PINRemoteImageManagerDownloadOptionsNone
+                                 completion:^(PINRemoteImageManagerResult *result)
+     {
+         dispatch_semaphore_signal(semaphore);
+     }];
+    dispatch_semaphore_wait(semaphore, [self timeout]);
+    NSDictionary *headers = [[NSJSONSerialization JSONObjectWithData:self.data options:NSJSONReadingMutableContainers error:nil] valueForKey:@"headers"];
+    XCTAssert([headers[@"X-Custom-Header"] isEqualToString:@"Custom Header Value"]);
 }
 
 - (void)testSkipFLAnimatedImageDownload
@@ -149,6 +225,59 @@
     
     XCTAssert(outImage && [outImage isKindOfClass:[UIImage class]], @"Failed downloading image or image is not a UIImage.");
     XCTAssert(outAnimatedImage == nil, @"Animated image is not nil.");
+}
+
+- (void)testErrorOnNilURLDownload
+{
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block NSError *outError = nil;
+    [self.imageManager downloadImageWithURL:nil
+                                    options:PINRemoteImageManagerDownloadOptionsNone
+                                 completion:^(PINRemoteImageManagerResult *result)
+     {
+         outError = result.error;
+         dispatch_semaphore_signal(semaphore);
+     }];
+    dispatch_semaphore_wait(semaphore, [self timeout]);
+    XCTAssert([outError.domain isEqualToString:NSURLErrorDomain]);
+    XCTAssert(outError.code == NSURLErrorUnsupportedURL);
+    XCTAssert([outError.localizedDescription isEqualToString:@"unsupported URL"]);
+}
+
+- (void)testErrorOnEmptyURLDownload
+{
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block NSError *outError = nil;
+    [self.imageManager downloadImageWithURL:[self emptyURL]
+                                    options:PINRemoteImageManagerDownloadOptionsNone
+                                 completion:^(PINRemoteImageManagerResult *result)
+     {
+         outError = result.error;
+         dispatch_semaphore_signal(semaphore);
+     }];
+    dispatch_semaphore_wait(semaphore, [self timeout]);
+    XCTAssert([outError.domain isEqualToString:NSURLErrorDomain]);
+    XCTAssert(outError.code == NSURLErrorUnsupportedURL);
+    // iOS8 (and presumably 10.10) returns NSURLErrorUnsupportedURL which means the HTTP NSURLProtocol does not accept it
+    NSArray *validErrorMessages = @[ @"unsupported URL", @"The operation couldn’t be completed. (NSURLErrorDomain error -1002.)"];
+    XCTAssert([validErrorMessages containsObject:outError.localizedDescription], @"%@", outError.localizedDescription);
+}
+
+- (void)testErrorOn404Response
+{
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block NSError *outError = nil;
+    [self.imageManager downloadImageWithURL:[self fourZeroFourURL]
+                                    options:PINRemoteImageManagerDownloadOptionsNone
+                                 completion:^(PINRemoteImageManagerResult *result)
+     {
+         outError = result.error;
+         dispatch_semaphore_signal(semaphore);
+     }];
+    dispatch_semaphore_wait(semaphore, [self timeout]);
+    XCTAssert([outError.domain isEqualToString:NSURLErrorDomain]);
+    XCTAssert(outError.code == NSURLErrorRedirectToNonExistentLocation);
+    XCTAssert([outError.localizedDescription isEqualToString:@"The requested URL was not found on this server."]);
 }
 
 - (void)testDecoding
@@ -302,6 +431,7 @@
     [self waitForExpectationsWithTimeout:[self timeoutTimeInterval] handler:NULL];
 }
 
+#if USE_FLANIMATED_IMAGE
 - (void)testFLAnimatedImageView
 {
     XCTestExpectation *imageSetExpectation = [self expectationWithDescription:@"animatedImageView did not have animated image set"];
@@ -316,6 +446,7 @@
 
     [self waitForExpectationsWithTimeout:[self timeoutTimeInterval] handler:NULL];
 }
+#endif
 
 - (void)testEarlyReturn {
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
@@ -335,6 +466,7 @@
     XCTAssert(image != nil, @"image callback did not occur synchronously.");
 }
 
+#if USE_FLANIMATED_IMAGE
 - (void)testload
 {
     srand([[NSDate date] timeIntervalSince1970]);
@@ -367,6 +499,7 @@
     }
     dispatch_group_wait(group, [self timeoutWithInterval:100]);
 }
+#endif
 
 - (void)testInvalidObject
 {
@@ -633,6 +766,26 @@
          dispatch_semaphore_signal(semaphore);
      }];
     dispatch_semaphore_wait(semaphore, [self timeout]);
+}
+
+- (void)testAuthentication {
+	dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+	__block BOOL didCallAuthenticationChallenge = NO;
+	
+	[self.imageManager setAuthenticationChallenge:^(NSURLSessionTask *task, NSURLAuthenticationChallenge *challenge, PINRemoteImageManagerAuthenticationChallengeCompletionHandler aHandler) {
+		didCallAuthenticationChallenge = YES;
+		aHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+		dispatch_semaphore_signal(semaphore);
+		
+	}];
+	
+	[self.imageManager downloadImageWithURL: [NSURL URLWithString:@"https://media-cache-ec0.pinimg.com/600x/1b/bc/c2/1bbcc264683171eb3815292d2f546e92.jpg"]
+									options:PINRemoteImageManagerDownloadOptionsNone
+								 completion:nil];
+	
+	dispatch_semaphore_wait(semaphore, [self timeout]);
+	
+	XCTAssert(didCallAuthenticationChallenge, @"Did not call authenticationchallenge.");
 }
 
 @end

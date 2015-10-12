@@ -6,13 +6,17 @@
 //
 //
 
-@import Foundation;
+#import <Foundation/Foundation.h>
 
 @protocol PINURLSessionManagerDelegate <NSObject>
 
 @required
 - (void)didReceiveData:(NSData *)data forTask:(NSURLSessionTask *)task;
 - (void)didCompleteTask:(NSURLSessionTask *)task withError:(NSError *)error;
+
+@optional
+- (void)didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge forTask:(NSURLSessionTask *)task completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *credential))completionHandler;
+
 
 @end
 
