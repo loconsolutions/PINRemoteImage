@@ -163,7 +163,11 @@ typedef void (^PINRemoteImageManagerDataCompletion)(NSData *data, NSError *error
         _urlSessionTaskQueue.name = @"PINRemoteImageManager Concurrent URL Session Task Queue";
         _urlSessionTaskQueue.maxConcurrentOperationCount = 10;
         
-        self.sessionManager = [[PINURLSessionManager alloc] initWithSessionConfiguration:configuration];
+        NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+        [config setHTTPAdditionalHeaders:@{@"Accept":@"image/webp,image/*;q=0.8"}];
+        ;
+        
+        self.sessionManager = [[PINURLSessionManager alloc] initWithSessionConfiguration:config];
         self.sessionManager.delegate = self;
         
         self.estimatedRemainingTimeThreshold = 0.0;
