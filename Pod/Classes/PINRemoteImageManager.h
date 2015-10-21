@@ -144,6 +144,15 @@ typedef void(^PINRemoteImageManagerAuthenticationChallenge)(NSURLSessionTask *ta
 - (void)setAuthenticationChallenge:(PINRemoteImageManagerAuthenticationChallenge)aChallenge;
 
 /**
+ *  Set the session config with additional data
+ *
+ *  @param configuration NSURLSessionConfiguration with configuration data
+ */
+- (void)setSessionConfiguration:(NSURLSessionConfiguration *) configuration;
+
+
+
+/**
  Set the minimum BPS to download the highest quality image in a set.
  @see downloadImageWithURLs:options:progress:completion:
  
